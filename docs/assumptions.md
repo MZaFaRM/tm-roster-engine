@@ -14,4 +14,3 @@
   first served, only if the roster can still be covered.
 - Fairness covers total hours plus nights, weekends and holidays.
 - If a roster is impossible, gaps are reported rather than rules broken.
-- Designed for up to ~50 employees.
