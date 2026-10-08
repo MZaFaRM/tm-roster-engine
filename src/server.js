@@ -1,5 +1,6 @@
 const express = require("express");
 const cfg = require("./config");
+const path = require("path");
 const db = require("./db");
 const { solveInWorker } = require("./engine");
 const { fail, isDate, isLocalTime, toId } = require("./utils");
@@ -8,6 +9,7 @@ const swaggerDocs = require("./swagger");
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "..", "public")));
 app.use("/docs", ...swaggerDocs);
 
 app.get("/health", (req, res) => res.json({ ok: true }));
@@ -133,6 +135,15 @@ app.get(
 		const run = await db.getRun(toId(req.params.id));
 		if (!run) throw fail(404, "roster not found");
 		res.json(run);
+	}),
+);
+
+app.delete(
+	"/rosters/:id",
+	route(async (req, res) => {
+		const deleted = await db.deleteRun(toId(req.params.id));
+		if (!deleted) throw fail(404, "roster not found");
+		res.status(204).end();
 	}),
 );
 

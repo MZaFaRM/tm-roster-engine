@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Roster Engine Demo</title>
+		<style>
+			:root {
+				--bg: #f5f6f8;
+				--card: #fff;
+				--line: #e2e5e9;
+				--text: #1c2229;
+				--muted: #6a737d;
+				--ok: #1f8a4c;
+				--bad: #c0392b;
+				--warn: #b7791f;
+				--sup: #2d5be3;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				font:
+					14px/1.45 system-ui,
+					-apple-system,
+					sans-serif;
+				background: var(--bg);
+				color: var(--text);
+			}
+			header {
+				padding: 14px 24px;
+				background: var(--text);
+				color: #fff;
+			}
+			header h1 {
+				margin: 0;
+				font-size: 18px;
+			}
+			header p {
+				margin: 3px 0 0;
+				color: #aab3bd;
+				font-size: 13px;
+			}
+			main {
+				display: grid;
+				grid-template-columns: minmax(380px, 440px) 1fr;
+				gap: 16px;
+				padding: 16px 24px;
+				align-items: start;
+			}
+			.card {
+				background: var(--card);
+				border: 1px solid var(--line);
+				border-radius: 8px;
+				padding: 14px;
+				margin-bottom: 16px;
+			}
+			h2 {
+				font-size: 12px;
+				margin: 0 0 10px;
+				text-transform: uppercase;
+				letter-spacing: 0.05em;
+				color: var(--muted);
+			}
+			label {
+				display: block;
+				font-size: 12px;
+				color: var(--muted);
+				margin: 6px 0 2px;
+			}
+			input,
+			select,
+			button {
+				font: inherit;
+				padding: 6px 8px;
+				border: 1px solid var(--line);
+				border-radius: 6px;
+				width: 100%;
+			}
+			input[type="checkbox"] {
+				width: auto;
+			}
+			button {
+				background: var(--text);
+				color: #fff;
+				border: 0;
+				cursor: pointer;
+				margin-top: 10px;
+			}
+			button.link {
+				background: none;
+				color: var(--sup);
+				padding: 0;
+				margin: 0;
+				width: auto;
+			}
+			table {
+				border-collapse: collapse;
+				width: 100%;
+			}
+			th,
+			td {
+				text-align: left;
+				padding: 5px 8px;
+				border-bottom: 1px solid var(--line);
+				vertical-align: top;
+			}
+			th {
+				font-size: 12px;
+				color: var(--muted);
+				font-weight: 600;
+			}
+			.row {
+				display: flex;
+				gap: 8px;
+			}
+			.row > * {
+				flex: 1;
+			}
+			.sup {
+				color: var(--sup);
+				font-weight: 600;
+			}
+			.gapcell {
+				background: #fdecea;
+				color: var(--bad);
+				font-weight: 600;
+			}
+			.daysep td {
+				background: #eef1f5;
+				font-weight: 600;
+			}
+			.badge {
+				display: inline-block;
+				padding: 1px 8px;
+				border-radius: 99px;
+				font-size: 12px;
+				font-weight: 600;
+				color: #fff;
+			}
+			.msg {
+				margin-top: 8px;
+				font-size: 13px;
+			}
+			.err {
+				color: var(--bad);
+			}
+			.okt {
+				color: var(--ok);
+			}
+			.muted {
+				color: var(--muted);
+			}
+			.small {
+				font-size: 12px;
+			}
+			.dayrow {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 4px 0;
+			}
+			.daylabel {
+				width: 70px;
+				font-size: 12px;
+				font-weight: 600;
+				color: var(--muted);
+				flex: none;
+			}
+			.strip {
+				display: flex;
+				gap: 2px;
+				flex: 1;
+			}
+			.strip > div {
+				height: 26px;
+				border-radius: 3px;
+				font-size: 11px;
+				color: #fff;
+				padding: 5px 4px;
+				overflow: hidden;
+				white-space: nowrap;
+				text-overflow: ellipsis;
+				min-width: 0;
+			}
+			.axis {
+				display: flex;
+				justify-content: space-between;
+				margin-left: 78px;
+				font-size: 11px;
+				color: var(--muted);
+			}
+			.legend span {
+				display: inline-block;
+				width: 10px;
+				height: 10px;
+				border-radius: 2px;
+				margin: 0 4px 0 12px;
+				vertical-align: -1px;
+			}
+			.bar {
+				height: 8px;
+				background: var(--sup);
+				border-radius: 4px;
+			}
+			.summary {
+				display: flex;
+				gap: 20px;
+				flex-wrap: wrap;
+				align-items: center;
+			}
+			.summary b {
+				font-size: 18px;
+				display: block;
+			}
+			#empty {
+				text-align: center;
+				padding: 60px;
+				color: var(--muted);
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>Roster Engine Demo</h1>
+			<p>
+				6 overlapping 8-hour shifts per day · 12h rest · ≥1 supervisor
+				on the floor at all times · fair share of nights, weekends,
+				holidays
+			</p>
+		</header>
+
+		<main>
+			<!-- LEFT: inputs -->
+			<div>
+				<form class="card" id="genForm">
+					<h2>1 · Generate roster</h2>
+					<div class="row">
+						<div>
+							<label>Start date</label
+							><input id="start" type="date" value="2026-10-08" />
+						</div>
+						<div>
+							<label>Days</label
+							><input
+								id="days"
+								type="number"
+								min="1"
+								max="31"
+								value="3"
+							/>
+						</div>
+					</div>
+					<label
+						><input id="replace" type="checkbox" /> Replace existing
+						roster for this exact period</label
+					>
+					<button>Generate</button>
+					<div id="genMsg" class="msg"></div>
+				</form>
+
+				<form class="card" id="leaveForm">
+					<h2>2 · Add leave</h2>
+					<label>Employee</label
+					><select id="leaveEmp" class="empSelect"></select>
+					<div class="row">
+						<div>
+							<label>From (site time)</label
+							><input id="leaveStart" value="2026-10-08 06:00" />
+						</div>
+						<div>
+							<label>To</label
+							><input id="leaveEnd" value="2026-10-08 18:00" />
+						</div>
+					</div>
+					<button>Add leave</button>
+					<div id="leaveMsg" class="msg"></div>
+				</form>
+
+				<form class="card" id="flexiForm">
+					<h2>3 · Request flexi day</h2>
+					<div class="row">
+						<div>
+							<label>Employee</label
+							><select id="flexiEmp" class="empSelect"></select>
+						</div>
+						<div>
+							<label>Date</label
+							><input
+								id="flexiDate"
+								type="date"
+								value="2026-10-09"
+							/>
+						</div>
+					</div>
+					<button>Submit request</button>
+					<div id="flexiMsg" class="msg"></div>
+				</form>
+
+				<div class="card">
+					<h2>Saved rosters</h2>
+					<div id="runs"></div>
+				</div>
+				<div class="card">
+					<h2>Flexi requests</h2>
+					<div id="flexiList"></div>
+				</div>
+				<div class="card">
+					<h2>Employees</h2>
+					<div id="emps"></div>
+				</div>
+			</div>
+
+			<!-- RIGHT: result -->
+			<div id="result">
+				<div class="card" id="empty">
+					Generate a roster or open a saved one.
+				</div>
+			</div>
+		</main>
+
+		<script>
+			const $ = (s) => document.querySelector(s);
+			const esc = (s) =>
+				String(s ?? "").replace(
+					/[&<>"]/g,
+					(c) =>
+						({
+							"&": "&amp;",
+							"<": "&lt;",
+							">": "&gt;",
+							'"': "&quot;",
+						})[c],
+				);
+			const COLORS = {
+				SOLVED: "var(--ok)",
+				APPROVED: "var(--ok)",
+				FAIL: "var(--bad)",
+				DENIED: "var(--bad)",
+				TIMEOUT: "var(--warn)",
+				DEFERRED: "var(--warn)",
+				REVIEW: "var(--warn)",
+				PENDING: "#8a939c",
+			};
+			const badge = (s) =>
+				`<span class="badge" style="background:${COLORS[s] || "#8a939c"}">${esc(s)}</span>`;
+			const HOURS_PER_POINT = 4; // matches config.js
+
+			let emps = [];
+			let currentRunId = null;
+			const isSup = (id) =>
+				emps.find((e) => e.emp_id === id)?.quals.includes("SUP");
+
+			async function api(method, url, body) {
+				const res = await fetch(url, {
+					method,
+					headers: body ? { "Content-Type": "application/json" } : {},
+					body: body ? JSON.stringify(body) : undefined,
+				});
+				const data = await res.json().catch(() => ({}));
+				if (!res.ok)
+					throw new Error(data.error || `HTTP ${res.status}`);
+				return data;
+			}
+			const say = (el, text, ok) => {
+				el.textContent = text;
+				el.className = "msg " + (ok ? "okt" : "err");
+			};
+
+			// Left-side lists
+
+			async function loadEmployees() {
+				const [list, leave] = await Promise.all([
+					api("GET", "/employees"),
+					api("GET", "/leave"),
+				]);
+				emps = list;
+				const opts = emps
+					.filter((e) => e.active)
+					.map(
+						(e) =>
+							`<option value="${e.emp_id}">${e.emp_id} · ${esc(e.emp_name)}</option>`,
+					)
+					.join("");
+				document
+					.querySelectorAll(".empSelect")
+					.forEach((s) => (s.innerHTML = opts));
+				$("#emps").innerHTML =
+					`<table><tr><th>#</th><th>Name</th><th>Quals</th><th>Leave</th></tr>${emps
+						.map(
+							(e) => `<tr>
+      <td>${e.emp_id}</td>
+      <td class="${e.quals.includes("SUP") ? "sup" : ""}">${esc(e.emp_name)}${e.quals.includes("SUP") ? " ★" : ""}</td>
+      <td class="small">${e.quals.map(esc).join(", ") || '<span class="muted">none</span>'}</td>
+      <td class="small">${leave
+			.filter((l) => l.emp_id === e.emp_id)
+			.map(
+				(l) =>
+					`${esc(l.start_local)} → ${esc(l.end_local.slice(11))}${l.leave_type === "FLEXI" ? " (flexi)" : ""}`,
+			)
+			.join("<br>")}</td>
+    </tr>`,
+						)
+						.join(
+							"",
+						)}</table><p class="small muted">★ = supervisor</p>`;
+			}
+
+			async function loadFlexi() {
+				const list = await api("GET", "/flexi-requests");
+				$("#flexiList").innerHTML = list.length
+					? `<table><tr><th>Who</th><th>Date</th><th>Status</th></tr>${list
+							.map(
+								(
+									r,
+								) => `<tr><td>${esc(r.emp_name)}</td><td>${esc(r.req_date)}</td>
+      <td>${badge(r.status)}<div class="small muted">${esc(r.reason)}</div></td></tr>`,
+							)
+							.join("")}</table>`
+					: '<span class="muted">None</span>';
+			}
+
+			async function loadRuns() {
+				const list = await api("GET", "/rosters");
+				$("#runs").innerHTML = list.length
+					? `<table><tr><th>Run</th><th>Period</th><th>Status</th><th></th></tr>${list
+							.map(
+								(
+									r,
+								) => `<tr><td>${r.run_id}</td><td>${esc(r.period_start)} · ${r.days}d</td><td>${badge(r.status)}</td>
+                  <td style="white-space:nowrap">
+        <button class="link" onclick="openRun(${r.run_id})">View</button> ·
+        <button class="link" style="color:var(--bad)" onclick="deleteRun(${r.run_id})">Delete</button>
+      </td></tr>`,
+							)
+							.join("")}</table>`
+					: '<span class="muted">None yet</span>';
+			}
+
+			async function openRun(id) {
+				try {
+					showRun(await api("GET", `/rosters/${id}`));
+				} catch (e) {
+					alert(e.message);
+				}
+			}
+
+			async function deleteRun(id) {
+				if (!confirm(`Delete roster run #${id}?`)) return;
+				try {
+					await api("DELETE", `/rosters/${id}`);
+					if (currentRunId === id) {
+						currentRunId = null;
+						$("#result").innerHTML =
+							'<div class="card" id="empty">Generate a roster or open a saved one.</div>';
+					}
+					loadRuns();
+				} catch (e) {
+					alert(e.message);
+				}
+			}
+
+			// Result view
+
+			function showRun(run) {
+				const a = run.assignments;
+				const positions = [...new Set(a.map((x) => x.pos_cd))];
+				const starts = [...new Set(a.map((x) => x.start_local))].sort();
+
+				// Roster grid: one row per shift, one column per position
+				let lastDay = "",
+					grid = "";
+				for (const s of starts) {
+					const inShift = a.filter((x) => x.start_local === s);
+					const day = s.slice(0, 10);
+					if (day !== lastDay) {
+						grid += `<tr class="daysep"><td colspan="${positions.length + 1}">${day}</td></tr>`;
+						lastDay = day;
+					}
+					grid += `<tr><td class="small">${s.slice(11)} – ${inShift[0].end_local.slice(11)}</td>${positions
+						.map((p) => {
+							const x = inShift.find((y) => y.pos_cd === p);
+							if (!x) return '<td class="gapcell">GAP</td>';
+							return `<td class="${isSup(x.emp_id) ? "sup" : ""}">${esc(x.emp_name)}${isSup(x.emp_id) ? " ★" : ""}</td>`;
+						})
+						.join("")}</tr>`;
+				}
+
+				// Supervisor coverage, one row per day (00:00 → 24:00)
+				const addDays = (d, n) => {
+					const x = new Date(d + "T00:00Z");
+					x.setUTCDate(x.getUTCDate() + n);
+					return x.toISOString().slice(0, 10);
+				};
+				const dayList = Array.from({ length: run.days }, (_, i) =>
+					addDays(run.period_start, i),
+				);
+
+				// Cut at every shift start/end AND at every midnight, so no block crosses days
+				const cuts = [
+					...new Set([
+						...a.flatMap((x) => [x.start_local, x.end_local]),
+						...dayList.map((d) => `${d} 00:00`),
+						`${addDays(run.period_start, run.days)} 00:00`,
+					]),
+				].sort();
+
+				const hourOf = (t, day) =>
+					t.slice(0, 10) === day
+						? Number(t.slice(11, 13)) + Number(t.slice(14, 16)) / 60
+						: 24;
+
+				let strip = "";
+				for (const day of dayList) {
+					let cells = "";
+					for (let i = 0; i < cuts.length - 1; i++) {
+						const [from, to] = [cuts[i], cuts[i + 1]];
+						if (from.slice(0, 10) !== day) continue;
+						const hours = hourOf(to, day) - hourOf(from, day);
+						const onFloor = a.filter(
+							(x) => x.start_local <= from && x.end_local >= to,
+						);
+						const sups = onFloor
+							.filter((x) => isSup(x.emp_id))
+							.map((x) => x.emp_name);
+						const [color, text] = !onFloor.length
+							? ["var(--line)", ""]
+							: sups.length
+								? ["var(--ok)", sups.join(", ")]
+								: ["var(--bad)", "NO SUP"];
+						const tip =
+							`${from.slice(11)}–${hourOf(to, day) === 24 ? "24:00" : to.slice(11)}\n` +
+							(onFloor.length
+								? `On floor: ${onFloor.map((x) => x.emp_name).join(", ")}\nSupervisors: ${sups.join(", ") || "NONE"}`
+								: "No shift from this roster covers this time");
+						cells += `<div style="flex:${hours} 1 0; background:${color}" title="${esc(tip)}">${esc(text)}</div>`;
+					}
+					const wd = new Date(day + "T00:00Z").toLocaleDateString(
+						"en-GB",
+						{ weekday: "short", timeZone: "UTC" },
+					);
+					strip += `<div class="dayrow"><div class="daylabel">${wd} ${day.slice(5)}</div><div class="strip">${cells}</div></div>`;
+				}
+
+				// Fairness (only returned right after generating)
+				let people = "";
+				if (run.people) {
+					const rows = run.people.map((p) => ({
+						...p,
+						score: p.hours + p.points * HOURS_PER_POINT,
+					}));
+					const max = Math.max(1, ...rows.map((r) => r.score));
+					people = `<div class="card"><h2>Fairness</h2>
+      <p class="small muted">Score = hours + unpopular points × ${HOURS_PER_POINT}. Points: night 1, weekend 1, holiday 2. Lowest score is tried first.</p>
+      <table><tr><th>Employee</th><th>Hours</th><th>Points</th><th>Score</th><th style="width:40%"></th></tr>${rows
+			.map(
+				(
+					r,
+				) => `<tr><td>${esc(r.emp_name)}</td><td>${r.hours}</td><td>${r.points}</td><td>${r.score}</td>
+          <td><div class="bar" style="width:${(r.score / max) * 100}%"></div></td></tr>`,
+			)
+			.join("")}</table></div>`;
+				}
+
+				const flexi = run.flexi_decisions?.length
+					? `<div class="card"><h2>Flexi decisions this run</h2>
+    <table><tr><th>Employee</th><th>Date</th><th>Decision</th><th>Reason</th></tr>${run.flexi_decisions
+		.map(
+			(d) => `<tr><td>${esc(d.emp_name)}</td><td>${esc(d.req_date)}</td>
+        <td>${badge(d.status)}</td><td class="small">${esc(d.reason)}</td></tr>`,
+		)
+		.join("")}</table></div>`
+					: "";
+
+				$("#result").innerHTML = `
+    <div class="card summary">
+      <div><span class="muted small">Run</span><b>#${run.run_id}</b></div>
+      <div><span class="muted small">Period</span><b>${esc(run.period_start)} · ${run.days}d</b></div>
+      <div><span class="muted small">Status</span><b>${badge(run.status)}</b></div>
+      <div><span class="muted small">Solve time</span><b>${run.duration_ms} ms</b></div>
+      ${run.stats ? `<div><span class="muted small">Tries / undos</span><b>${run.stats.tries} / ${run.stats.undos}</b></div>` : ""}
+      ${run.used_fallback ? `<div class="err">Greedy fallback used see gaps</div>` : ""}
+      ${run.replaced_run_ids?.length ? `<div class="muted">Replaced run ${run.replaced_run_ids.join(", ")}</div>` : ""}
+    </div>
+
+    <div class="card">
+      <h2>Supervisor on the floor</h2>
+      ${strip}
+      <div class="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+      <div class="small muted legend" style="margin-top:8px">
+        <span style="background:var(--ok)"></span>supervisor present
+        <span style="background:var(--bad)"></span>no supervisor
+        <span style="background:var(--line)"></span>outside this roster
+        &nbsp;· hover a block to see everyone on the floor
+      </div>
+    </div>
+
+    ${run.gaps.length ? `<div class="card"><h2>Gaps</h2><ul>${run.gaps.map((g) => `<li class="err">${esc(g)}</li>`).join("")}</ul></div>` : ""}
+
+    <div class="card"><h2>Roster (${esc(run.time_zone)})</h2>
+      <table><tr><th>Shift</th>${positions.map((p) => `<th>${esc(p)}</th>`).join("")}</tr>${grid}</table>
+      <p class="small muted">★ = supervisor-qualified. Each shift overlaps the next by 4 hours.</p>
+    </div>
+
+    ${flexi}
+    ${people}`;
+			}
+
+			// Forms
+			$("#genForm").onsubmit = async (e) => {
+				e.preventDefault();
+				const m = $("#genMsg");
+				say(
+					m,
+					"Solving… (a few seconds, more with pending flexi requests)",
+					true,
+				);
+				try {
+					const run = await api("POST", "/rosters", {
+						startDate: $("#start").value,
+						days: Number($("#days").value),
+						replace: $("#replace").checked,
+					});
+					say(m, `Saved as run #${run.run_id}`, true);
+					showRun(run);
+					loadRuns();
+					loadFlexi();
+					loadEmployees(); // approved flexi days show up as leave
+				} catch (err) {
+					say(m, err.message, false);
+				}
+			};
+
+			$("#leaveForm").onsubmit = async (e) => {
+				e.preventDefault();
+				try {
+					await api("POST", "/leave", {
+						empId: Number($("#leaveEmp").value),
+						startAt: $("#leaveStart").value,
+						endAt: $("#leaveEnd").value,
+					});
+					say($("#leaveMsg"), "Leave added", true);
+					loadEmployees();
+				} catch (err) {
+					say($("#leaveMsg"), err.message, false);
+				}
+			};
+
+			$("#flexiForm").onsubmit = async (e) => {
+				e.preventDefault();
+				try {
+					await api("POST", "/flexi-requests", {
+						empId: Number($("#flexiEmp").value),
+						date: $("#flexiDate").value,
+					});
+					say(
+						$("#flexiMsg"),
+						"Request submitted (decided on next roster run)",
+						true,
+					);
+					loadFlexi();
+				} catch (err) {
+					say($("#flexiMsg"), err.message, false);
+				}
+			};
+
+			loadEmployees();
+			loadFlexi();
+			loadRuns();
+		</script>
+	</body>
+</html>

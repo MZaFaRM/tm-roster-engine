@@ -337,6 +337,11 @@ async function getRun(runId) {
 	};
 }
 
+const deleteRun = (runId) =>
+	rows(`DELETE FROM td_roster_run WHERE run_id = $1 RETURNING run_id`, [
+		runId,
+	]).then((r) => r[0] ?? null);
+
 module.exports = {
 	pool,
 	listEmployees,
@@ -350,4 +355,5 @@ module.exports = {
 	findOverlappingRuns,
 	listRuns,
 	getRun,
+	deleteRun,
 };
