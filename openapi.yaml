@@ -216,6 +216,11 @@ paths:
                                 {
                                     $ref: "#/components/schemas/RosterRunCreated",
                                 }
+                "409":
+                    description: Period overlaps an existing roster (send `replace = true` if it's the exact same period)
+                    content:
+                        application/json:
+                            schema: { $ref: "#/components/schemas/Error" }
                 "400": { $ref: "#/components/responses/BadRequest" }
                 "500": { $ref: "#/components/responses/ServerError" }
 
@@ -276,7 +281,7 @@ components:
             format: date
             examples: ["2026-10-08"]
 
-        # Employees 
+        # Employees
         Employee:
             type: object
             required: [emp_id, emp_name, active, quals]
@@ -301,7 +306,7 @@ components:
                     default: []
                     description: Must be existing qualification codes
 
-        # Leave 
+        # Leave
         Leave:
             type: object
             required: [leave_id, emp_id, leave_type, start_local, end_local]
@@ -324,7 +329,7 @@ components:
                     $ref: "#/components/schemas/LocalDateTime"
                     description: Must be after `startAt`
 
-        # Flexi 
+        # Flexi
         FlexiStatus:
             type: string
             enum: [PENDING, APPROVED, DENIED, DEFERRED, REVIEW]
@@ -379,7 +384,7 @@ components:
                     description: Empty string when approved
                     examples: ["shifts could not be covered"]
 
-        # Rosters 
+        # Rosters
         CreateRosterRequest:
             type: object
             required: [startDate]
@@ -392,6 +397,10 @@ components:
                     minimum: 1
                     maximum: 31
                     default: 7
+                replace:
+                    type: boolean
+                    default: false
+                    description: Regenerate an existing roster for the exact same period (the old run is deleted)
 
         RunStatus:
             type: string

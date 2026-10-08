@@ -74,7 +74,7 @@ app.get(
 app.post(
 	"/rosters",
 	route(async (req, res) => {
-		const { startDate, days = 7 } = req.body ?? {};
+		const { startDate, days = 7, replace = false } = req.body ?? {};
 		if (!isDate(startDate)) throw fail(400, "startDate must be YYYY-MM-DD");
 		if (!Number.isInteger(days) || days < 1 || days > cfg.MAX_DAYS) {
 			throw fail(
@@ -82,14 +82,44 @@ app.post(
 				`days must be an integer from 1 to ${cfg.MAX_DAYS}`,
 			);
 		}
+		if (typeof replace !== "boolean")
+			throw fail(400, "replace must be a boolean");
+
+		// one roster per period. Same period can be replaced; a different overlapping period cannot.
+		const clashes = await db.findOverlappingRuns(startDate, days);
+		if (clashes.length) {
+			const samePeriod = clashes.every(
+				(r) => r.period_start === startDate && r.days === days,
+			);
+			if (!samePeriod) {
+				const c = clashes.find(
+					(r) => r.period_start !== startDate || r.days !== days,
+				);
+				throw fail(
+					409,
+					`period overlaps roster run ${c.run_id} (${c.period_start}, ${c.days} days)`,
+				);
+			}
+			if (!replace) {
+				throw fail(
+					409,
+					`a roster already exists for this period (run ${clashes[0].run_id}); send replace: true to regenerate`,
+				);
+			}
+		}
 
 		const problem = await db.loadProblem(startDate, days);
 		const result = await solveInWorker(problem);
-		const runId = await db.saveRun(problem, result);
+		const runId = await db.saveRun(
+			problem,
+			result,
+			clashes.map((r) => r.run_id),
+		);
 		const run = await db.getRun(runId);
 
 		res.status(201).json({
 			...run,
+			replaced_run_ids: clashes.map((r) => r.run_id),
 			stats: result.stats,
 			flexi_decisions: result.decisions,
 			people: result.people,

@@ -101,68 +101,107 @@ const createFlexiReq = (empId, date) =>
 
 async function loadProblem(startDate, days) {
 	const p = [startDate, days];
-	const [emps, shiftTmpls, positions, covRules, leave, special, reqs] =
-		await Promise.all([
-			rows(
-				`${EMP_SQL} WHERE e.active GROUP BY e.emp_id ORDER BY e.emp_id`,
-			),
+	const [
+		emps,
+		shiftTmpls,
+		positions,
+		covRules,
+		leave,
+		special,
+		reqs,
+		neighbours,
+	] = await Promise.all([
+		rows(`${EMP_SQL} WHERE e.active GROUP BY e.emp_id ORDER BY e.emp_id`),
 
-			rows(
-				`SELECT shift_cd, start_hour, len_hours FROM md_shift_tmpl ORDER BY start_hour`,
-			),
+		rows(
+			`SELECT shift_cd, start_hour, len_hours FROM md_shift_tmpl ORDER BY start_hour`,
+		),
 
-			rows(`SELECT p.pos_id, p.pos_cd,
+		rows(`SELECT p.pos_id, p.pos_cd,
                  COALESCE(array_agg(q.qual_cd) FILTER (WHERE q.qual_cd IS NOT NULL), '{}') AS quals
             FROM md_pos p LEFT JOIN md_pos_qual q USING (pos_id)
            GROUP BY p.pos_id ORDER BY p.pos_id`),
 
-			rows(`SELECT qual_cd, min_cnt FROM md_cov_rule`),
+		rows(`SELECT qual_cd, min_cnt FROM md_cov_rule`),
 
-			// Leave overlapping the period, as hours from period start
-			rows(
-				`WITH t AS (SELECT ($1::date)::timestamp AT TIME ZONE $3 AS t0)
+		// Leave overlapping the period, as hours from period start
+		rows(
+			`WITH t AS (SELECT ($1::date)::timestamp AT TIME ZONE $3 AS t0)
           SELECT l.emp_id,
                  EXTRACT(EPOCH FROM (l.start_at - t.t0)) / 3600 AS start_h,
                  EXTRACT(EPOCH FROM (l.end_at   - t.t0)) / 3600 AS end_h
             FROM td_leave l, t
            WHERE l.start_at < t.t0 + make_interval(days => $2::int) AND l.end_at > t.t0`,
-				[...p, cfg.SITE_TZ],
-			),
+			[...p, cfg.SITE_TZ],
+		),
 
-			// Which day numbers (1 = first day) are weekends / holidays
-			rows(
-				`SELECT d AS day,
+		// Which day numbers (1 = first day) are weekends / holidays
+		rows(
+			`SELECT d AS day,
                  EXTRACT(ISODOW FROM $1::date + d - 1) = ANY($3::int[]) AS is_weekend,
                  EXISTS (SELECT 1 FROM md_holiday h WHERE h.hol_date = $1::date + d - 1) AS is_holiday
             FROM generate_series(1, $2::int) d`,
-				[...p, cfg.WEEKEND_ISO_DAYS],
-			),
+			[...p, cfg.WEEKEND_ISO_DAYS],
+		),
 
-			// Pending flexi requests in the period, first come first served
-			rows(
-				`SELECT r.req_id, r.emp_id, r.req_date::text AS req_date,
+		// Undecided flexi requests in the period, first come first served.
+		// DEFERRED / REVIEW are retried on every run until they get a real decision.
+		rows(
+			`SELECT r.req_id, r.emp_id, r.req_date::text AS req_date,
                  (r.req_date - $1::date) + 1 AS day,
                  (SELECT count(*)::int FROM td_flexi_req a
                    WHERE a.emp_id = r.emp_id AND a.status = 'APPROVED'
                      AND date_part('year', a.req_date) = date_part('year', r.req_date)) AS used
             FROM td_flexi_req r
-           WHERE r.status = 'PENDING'
+           WHERE r.status IN ('PENDING', 'DEFERRED', 'REVIEW')
              AND r.req_date >= $1::date AND r.req_date < $1::date + $2::int
            ORDER BY r.submitted_at, r.req_id`,
-				p,
-			),
-		]);
+			p,
+		),
+
+		rows(
+			`WITH t AS (SELECT ($1::date)::timestamp AT TIME ZONE $3 AS t0),
+              near AS (
+                (SELECT run_id FROM td_roster_run
+                  WHERE period_start <= $1::date - 1 AND period_start + days > $1::date - 1
+                  ORDER BY run_id DESC LIMIT 1)
+                UNION
+                (SELECT run_id FROM td_roster_run
+                  WHERE period_start <= $1::date + $2::int AND period_start + days > $1::date + $2::int
+                  ORDER BY run_id DESC LIMIT 1))
+          SELECT a.emp_id,
+                 EXTRACT(EPOCH FROM (a.start_at - t.t0)) / 3600 AS start_h,
+                 EXTRACT(EPOCH FROM (a.end_at   - t.t0)) / 3600 AS end_h
+            FROM td_assign a, t
+           WHERE a.run_id IN (SELECT run_id FROM near)
+             AND a.end_at   > t.t0 - make_interval(hours => $4::int)
+             AND a.start_at < t.t0 + make_interval(days => $2::int, hours => $4::int)`,
+			[...p, cfg.SITE_TZ, cfg.MIN_REST_HOURS],
+		),
+	]);
 
 	const byId = new Map(
 		emps.map((e) => [
 			e.emp_id,
-			{ id: e.emp_id, name: e.emp_name, quals: e.quals, leave: [] },
+			{
+				id: e.emp_id,
+				name: e.emp_name,
+				quals: e.quals,
+				leave: [],
+				neighbours: [],
+			},
 		]),
 	);
 	for (const l of leave)
 		byId.get(l.emp_id)?.leave.push({
 			start: Number(l.start_h),
 			end: Number(l.end_h),
+		});
+
+	for (const a of neighbours)
+		byId.get(a.emp_id)?.neighbours.push({
+			start: Number(a.start_h),
+			end: Number(a.end_h),
 		});
 
 	return {
@@ -186,8 +225,16 @@ async function loadProblem(startDate, days) {
 
 // - Engine output -
 
-const saveRun = (problem, result) =>
+const saveRun = (problem, result, replaceIds = []) =>
 	tx(async (c) => {
+		if (replaceIds.length) {
+			// CASCADE removes their td_assign and td_gap rows
+			await c.query(
+				`DELETE FROM td_roster_run WHERE run_id = ANY($1::int[])`,
+				[replaceIds],
+			);
+		}
+
 		for (const d of result.decisions) {
 			await c.query(
 				`UPDATE td_flexi_req SET status = $2, reason = NULLIF($3, ''), decided_at = now() WHERE req_id = $1`,
@@ -242,6 +289,16 @@ const saveRun = (problem, result) =>
 		return run.run_id;
 	});
 
+const findOverlappingRuns = (startDate, days) =>
+	rows(
+		`SELECT run_id, period_start::text AS period_start, days
+       FROM td_roster_run
+      WHERE period_start < $1::date + $2::int
+        AND period_start + days > $1::date
+      ORDER BY run_id`,
+		[startDate, days],
+	);
+
 const listRuns = () =>
 	rows(`
   SELECT run_id, period_start::text AS period_start, days, status, used_fallback, duration_ms, created_at
@@ -290,6 +347,7 @@ module.exports = {
 	createFlexiReq,
 	loadProblem,
 	saveRun,
+	findOverlappingRuns,
 	listRuns,
 	getRun,
 };
