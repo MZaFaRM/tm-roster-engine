@@ -1,0 +1,489 @@
+openapi: 3.1.0
+info:
+    title: Roster Scheduling API
+    version: 1.0.0
+    description: |
+        Shift rostering for a 24/7 site with 6 overlapping shifts per day.
+
+        **Times.** All local times use the format `YYYY-MM-DD HH:MM` in the site's time zone
+        (returned as `time_zone` on roster runs, default `Asia/Dubai`). Dates use `YYYY-MM-DD`.
+
+        **Generating a roster** (`POST /rosters`) does three things in one call:
+        1. Decides all *pending* flexi requests in the period, first come first served.
+           A request is approved only if the roster can still be fully covered without that person.
+        2. Builds the roster: every position on every shift, with at least one supervisor on the
+           floor at all times, 12 hours' rest between shifts, and unpopular shifts shared fairly.
+        3. Saves the run and returns it.
+
+        If no complete roster exists, the run has `used_fallback: true` and lists `gaps`.
+servers:
+    - url: http://localhost:3000
+tags:
+    - name: Employees
+    - name: Leave
+    - name: Flexi requests
+    - name: Rosters
+    - name: System
+
+paths:
+    /health:
+        get:
+            tags: [System]
+            summary: Liveness check
+            operationId: getHealth
+            responses:
+                "200":
+                    description: API is up
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [ok]
+                                properties:
+                                    ok: { type: boolean, const: true }
+
+    /employees:
+        get:
+            tags: [Employees]
+            summary: List employees
+            operationId: listEmployees
+            responses:
+                "200":
+                    description: All employees, ordered by id
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items: { $ref: "#/components/schemas/Employee" }
+        post:
+            tags: [Employees]
+            summary: Create an employee
+            operationId: createEmployee
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            {
+                                $ref: "#/components/schemas/CreateEmployeeRequest",
+                            }
+                        example: { name: Rami, quals: [LITHO] }
+            responses:
+                "201":
+                    description: Created
+                    content:
+                        application/json:
+                            schema: { $ref: "#/components/schemas/Employee" }
+                "400": { $ref: "#/components/responses/BadRequest" }
+
+    /leave:
+        get:
+            tags: [Leave]
+            summary: List leave
+            description: Includes approved flexi days (`leave_type` = `FLEXI`).
+            operationId: listLeave
+            parameters:
+                - name: empId
+                  in: query
+                  required: false
+                  description: Only this employee's leave
+                  schema: { type: integer, minimum: 1 }
+            responses:
+                "200":
+                    description: Leave periods, ordered by start time
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items: { $ref: "#/components/schemas/Leave" }
+                "400": { $ref: "#/components/responses/BadRequest" }
+        post:
+            tags: [Leave]
+            summary: Add a leave period
+            description: |
+                Any shift that overlaps the period is blocked for this employee, including
+                night shifts that start before the period. Partial days are allowed.
+            operationId: createLeave
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            { $ref: "#/components/schemas/CreateLeaveRequest" }
+                        example:
+                            {
+                                empId: 3,
+                                startAt: "2026-10-08 06:00",
+                                endAt: "2026-10-08 18:00",
+                            }
+            responses:
+                "201":
+                    description: Created
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [leave_id]
+                                properties:
+                                    leave_id: { type: integer }
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+
+    /flexi-requests:
+        get:
+            tags: [Flexi requests]
+            summary: List flexi requests
+            operationId: listFlexiRequests
+            parameters:
+                - name: status
+                  in: query
+                  required: false
+                  schema: { $ref: "#/components/schemas/FlexiStatus" }
+            responses:
+                "200":
+                    description: Requests in submission order
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    {
+                                        $ref: "#/components/schemas/FlexiRequest",
+                                    }
+        post:
+            tags: [Flexi requests]
+            summary: Submit a flexi day request
+            description: |
+                Created as `PENDING`. It is decided the next time a roster is generated for a
+                period containing this date. Each employee has 2 flexi days per calendar year.
+            operationId: createFlexiRequest
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            { $ref: "#/components/schemas/CreateFlexiRequest" }
+                        example: { empId: 12, date: "2026-10-10" }
+            responses:
+                "201":
+                    description: Created
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [req_id, status]
+                                properties:
+                                    req_id: { type: integer }
+                                    status: { type: string, const: PENDING }
+                "400": { $ref: "#/components/responses/BadRequest" }
+
+    /rosters:
+        get:
+            tags: [Rosters]
+            summary: List roster runs
+            operationId: listRosters
+            responses:
+                "200":
+                    description: Runs, newest first
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    {
+                                        $ref: "#/components/schemas/RosterRunSummary",
+                                    }
+        post:
+            tags: [Rosters]
+            summary: Generate a roster
+            description: |
+                Decides pending flexi requests in the period, builds the roster, saves it and returns it.
+                Can take several seconds (up to ~5 s for the search plus ~1 s per pending flexi request).
+            operationId: createRoster
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            { $ref: "#/components/schemas/CreateRosterRequest" }
+                        example: { startDate: "2026-10-08", days: 3 }
+            responses:
+                "201":
+                    description: Roster generated and saved
+                    content:
+                        application/json:
+                            schema:
+                                {
+                                    $ref: "#/components/schemas/RosterRunCreated",
+                                }
+                "400": { $ref: "#/components/responses/BadRequest" }
+                "500": { $ref: "#/components/responses/ServerError" }
+
+    /rosters/{id}:
+        get:
+            tags: [Rosters]
+            summary: Get a roster run
+            operationId: getRoster
+            parameters:
+                - name: id
+                  in: path
+                  required: true
+                  schema: { type: integer, minimum: 1 }
+            responses:
+                "200":
+                    description: The run with its assignments and gaps
+                    content:
+                        application/json:
+                            schema: { $ref: "#/components/schemas/RosterRun" }
+                "400": { $ref: "#/components/responses/BadRequest" }
+                "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+    responses:
+        BadRequest:
+            description: Invalid input (bad format, unknown employee or qualification, end before start)
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+                    example: { error: "date must be YYYY-MM-DD" }
+        NotFound:
+            description: Not found
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+                    example: { error: roster not found }
+        ServerError:
+            description: Unexpected error
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+
+    schemas:
+        Error:
+            type: object
+            required: [error]
+            properties:
+                error: { type: string }
+
+        LocalDateTime:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$'
+            description: Site-local time, `YYYY-MM-DD HH:MM`
+            examples: ["2026-10-08 22:00"]
+
+        Date:
+            type: string
+            format: date
+            examples: ["2026-10-08"]
+
+        # Employees 
+        Employee:
+            type: object
+            required: [emp_id, emp_name, active, quals]
+            properties:
+                emp_id: { type: integer, examples: [1] }
+                emp_name: { type: string, examples: [Aisha] }
+                active: { type: boolean }
+                quals:
+                    type: array
+                    description: Qualification codes, e.g. `LITHO`, `SUP` (supervisor)
+                    items: { type: string }
+                    examples: [[LITHO, SUP]]
+
+        CreateEmployeeRequest:
+            type: object
+            required: [name]
+            properties:
+                name: { type: string, minLength: 1 }
+                quals:
+                    type: array
+                    items: { type: string }
+                    default: []
+                    description: Must be existing qualification codes
+
+        # Leave 
+        Leave:
+            type: object
+            required: [leave_id, emp_id, leave_type, start_local, end_local]
+            properties:
+                leave_id: { type: integer }
+                emp_id: { type: integer }
+                leave_type:
+                    type: string
+                    enum: [LEAVE, FLEXI]
+                start_local: { $ref: "#/components/schemas/LocalDateTime" }
+                end_local: { $ref: "#/components/schemas/LocalDateTime" }
+
+        CreateLeaveRequest:
+            type: object
+            required: [empId, startAt, endAt]
+            properties:
+                empId: { type: integer, minimum: 1 }
+                startAt: { $ref: "#/components/schemas/LocalDateTime" }
+                endAt:
+                    $ref: "#/components/schemas/LocalDateTime"
+                    description: Must be after `startAt`
+
+        # Flexi 
+        FlexiStatus:
+            type: string
+            enum: [PENDING, APPROVED, DENIED, DEFERRED, REVIEW]
+            description: |
+                - `PENDING`: not decided yet
+                - `APPROVED`: roster still covered; added as `FLEXI` leave
+                - `DENIED`: no allowance left, or shifts could not be covered
+                - `DEFERRED`: roster had gaps even before this request; manager to decide
+                - `REVIEW`: the check timed out; manager to decide
+
+        FlexiRequest:
+            type: object
+            required:
+                [
+                    req_id,
+                    emp_id,
+                    emp_name,
+                    req_date,
+                    status,
+                    reason,
+                    submitted_at,
+                ]
+            properties:
+                req_id: { type: integer }
+                emp_id: { type: integer }
+                emp_name: { type: string }
+                req_date: { $ref: "#/components/schemas/Date" }
+                status: { $ref: "#/components/schemas/FlexiStatus" }
+                reason: { type: [string, "null"] }
+                submitted_at: { type: string, format: date-time }
+
+        CreateFlexiRequest:
+            type: object
+            required: [empId, date]
+            properties:
+                empId: { type: integer, minimum: 1 }
+                date: { $ref: "#/components/schemas/Date" }
+
+        FlexiDecision:
+            type: object
+            required: [req_id, emp_id, emp_name, req_date, status, reason]
+            properties:
+                req_id: { type: integer }
+                emp_id: { type: integer }
+                emp_name: { type: [string, "null"] }
+                req_date: { $ref: "#/components/schemas/Date" }
+                status:
+                    type: string
+                    enum: [APPROVED, DENIED, DEFERRED, REVIEW]
+                reason:
+                    type: string
+                    description: Empty string when approved
+                    examples: ["shifts could not be covered"]
+
+        # Rosters 
+        CreateRosterRequest:
+            type: object
+            required: [startDate]
+            properties:
+                startDate:
+                    $ref: "#/components/schemas/Date"
+                    description: First day of the period (local midnight)
+                days:
+                    type: integer
+                    minimum: 1
+                    maximum: 31
+                    default: 7
+
+        RunStatus:
+            type: string
+            enum: [SOLVED, FAIL, TIMEOUT]
+            description: |
+                - `SOLVED`: every position and coverage rule is satisfied
+                - `FAIL`: proven impossible; a best-effort roster with gaps was used instead
+                - `TIMEOUT`: search hit its time limit; a best-effort roster with gaps was used instead
+
+        RosterRunSummary:
+            type: object
+            required:
+                [
+                    run_id,
+                    period_start,
+                    days,
+                    status,
+                    used_fallback,
+                    duration_ms,
+                    created_at,
+                ]
+            properties:
+                run_id: { type: integer }
+                period_start: { $ref: "#/components/schemas/Date" }
+                days: { type: integer }
+                status: { $ref: "#/components/schemas/RunStatus" }
+                used_fallback:
+                    type: boolean
+                    description: True when `status` is not `SOLVED`; check `gaps`
+                duration_ms: { type: integer }
+                created_at: { type: string, format: date-time }
+
+        Assignment:
+            type: object
+            required: [start_local, end_local, pos_cd, emp_id, emp_name]
+            properties:
+                start_local: { $ref: "#/components/schemas/LocalDateTime" }
+                end_local: { $ref: "#/components/schemas/LocalDateTime" }
+                pos_cd: { type: string, examples: [TECH] }
+                emp_id: { type: integer }
+                emp_name: { type: string }
+
+        RosterRun:
+            allOf:
+                - $ref: "#/components/schemas/RosterRunSummary"
+                - type: object
+                  required: [time_zone, assignments, gaps]
+                  properties:
+                      time_zone: { type: string, examples: [Asia/Dubai] }
+                      assignments:
+                          type: array
+                          description: Filled positions, ordered by start time then position
+                          items: { $ref: "#/components/schemas/Assignment" }
+                      gaps:
+                          type: array
+                          description: Unfilled positions or coverage shortfalls. Empty when `SOLVED`.
+                          items: { type: string }
+                          examples:
+                              [
+                                  [
+                                      "Day 2 14:00 TECH: nobody eligible",
+                                      "Day 2 18:00-22:00: needs 1 SUP, has 0",
+                                  ],
+                              ]
+
+        PersonSummary:
+            type: object
+            required: [emp_id, emp_name, hours, points]
+            properties:
+                emp_id: { type: integer }
+                emp_name: { type: string }
+                hours: { type: number, description: Hours rostered in this run }
+                points:
+                    type: integer
+                    description: Unpopular points rostered (night 1, weekend 1, public holiday 2)
+
+        RosterRunCreated:
+            allOf:
+                - $ref: "#/components/schemas/RosterRun"
+                - type: object
+                  required: [stats, flexi_decisions, people]
+                  properties:
+                      stats:
+                          type: object
+                          required: [tries, undos]
+                          properties:
+                              tries: { type: integer }
+                              undos: { type: integer }
+                      flexi_decisions:
+                          type: array
+                          items: { $ref: "#/components/schemas/FlexiDecision" }
+                      people:
+                          type: array
+                          description: Hours and unpopular points per employee, for showing fairness
+                          items: { $ref: "#/components/schemas/PersonSummary" }
